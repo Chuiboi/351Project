@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <iostream>
 #include "msg.h"    /* For the message struct */
 
 /* The size of the shared memory chunk */
@@ -41,9 +42,10 @@ void init(int& shmid, int& msqid, void*& sharedMemPtr)
 	/* TODO: Attach to the message queue */ // check
 	/* Store the IDs and the pointer to the shared memory region in the corresponding parameters */ //check
 	key_t key; //initialize keys
-	
 	key = ftok("keyfile.txt", 'a');
+	
 	shmid = shmget(key, SHARED_MEMORY_CHUNK_SIZE, 0644 | IPC_CREAT); //creating or checking if the shared memory location exists
+	
 	msqid = msgget(key, 0666 | IPC_CREAT); //creating or checking if the message queue exists
 	
 	sharedMemPtr = shmat(shmid, (void *)0, 0);	//assigning the location of shared memory to a void pointer
@@ -60,8 +62,8 @@ void cleanUp(const int& shmid, const int& msqid, void* sharedMemPtr)
 {
 	/* TODO: Detach from shared memory */
 	shmdt(sharedMemPtr);//Detatch from shared memory
-	//shmctl(shmid, IPC_RMID, NULL);//Destroy the shared memory location
-	//msgctl(msqid, IPC_RMID, NULL);//Destory the message que
+	shmctl(shmid, IPC_RMID, NULL);//Destroy the shared memory location
+	msgctl(msqid, IPC_RMID, NULL);//Destory the message que
 }
 
 /**
@@ -72,21 +74,24 @@ void send(const char* fileName)
 {
 	/* Open the file for reading */
 	FILE* fp = fopen(fileName, "r");
-	
+	int size = sizeof(struct message) - sizeof(long);
+
 
 	/* A buffer to store message we will send to the receiver. */
-	message sndMsg; 
-	
+	message sndMsg;
+	sndMsg.mtype = SENDER_DATA_TYPE;//not sure if needed
+
 	/* A buffer to store message received from the receiver. */
 	message rcvMsg;
-	
+	//rcvMsg.mtype = RECV_DONE_TYPE;//not sure if needed
+
 	/* Was the file open? */
 	if(!fp)
 	{
 		perror("fopen");
 		exit(-1);
 	}
-	
+
 	/* Read the whole file */
 	while(!feof(fp))
 	{
@@ -99,48 +104,55 @@ void send(const char* fileName)
 			perror("fread");
 			exit(-1);
 		}
-		
-			
+
 		/* TODO: Send a message to the receiver telling him that the data is ready 
- 		 * (message of type SENDER_DATA_TYPE) 
+ 		 * (message of type SENDER_DATA_TYPE)
  		 */
-		
+		msgsnd(msqid, &sndMsg, size, 0);
+		std::cout << sndMsg.mtype << " " << sndMsg.size << std::endl;
+
 		/* TODO: Wait until the receiver sends us a message of type RECV_DONE_TYPE telling us 
- 		 * that he finished saving the memory chunk. 
+ 		 * that he finished saving the memory chunk.
  		 */
+ 		do{
+			msgrcv (msqid, &rcvMsg, size,1, 0);
+ 		}while(rcvMsg.mtype != RECV_DONE_TYPE);//wait until we receive proper notification from receiver
+ 		rcvMsg.mtype = 0;//clear receive message
 	}
-	
 
-	/** TODO: once we are out of the above loop, we have finished sending the file.
+
+	/* TODO: once we are out of the above loop, we have finished sending the file.
  	  * Lets tell the receiver that we have nothing more to send. We will do this by
- 	  * sending a message of type SENDER_DATA_TYPE with size field set to 0. 	
+ 	  * sending a message of type SENDER_DATA_TYPE with size field set to 0.
 	  */
+	sndMsg.size = 0;
+	msgsnd(msqid, &sndMsg, size, 0);
 
-		
 	/* Close the file */
 	fclose(fp);
-	
+
 }
+
 
 
 int main(int argc, char** argv)
 {
-	
+
 	/* Check the command line arguments */
 	if(argc < 2)
 	{
 		fprintf(stderr, "USAGE: %s <FILE NAME>\n", argv[0]);
 		exit(-1);
 	}
-		
+
 	/* Connect to shared memory and the message queue */
 	init(shmid, msqid, sharedMemPtr);
-	
+
 	/* Send the file */
 	send(argv[1]);
-	
+
 	/* Cleanup */
 	cleanUp(shmid, msqid, sharedMemPtr);
-		
+
 	return 0;
 }
